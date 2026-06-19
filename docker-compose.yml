@@ -1,0 +1,52 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:15
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: zyrauser
+      POSTGRES_PASSWORD: zyrapass
+      POSTGRES_DB: zyradb
+    volumes:
+      - zyra_pgdata:/var/lib/postgresql/data
+      - ./backend/migrations/init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zyrauser -d zyradb"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+    environment:
+      DATABASE_URL: postgresql+asyncpg://zyrauser:zyrapass@db:5432/zyradb
+      SECRET_KEY: ${SECRET_KEY:-zyra-secret-change-me-32chars!!!}
+      AZURE_TENANT_ID: ${AZURE_TENANT_ID:-57d2faf0-4718-4a64-b942-5ae5dc08db1d}
+      AZURE_CLIENT_ID: ${AZURE_CLIENT_ID:-794f651f-dbcb-45ad-a0a3-3681318b8df0}
+      AZURE_CLIENT_SECRET: ${AZURE_CLIENT_SECRET:-}
+      OUTLOOK_USER_EMAIL: ${OUTLOOK_USER_EMAIL:-APatil@glassdoctordfw.com}
+      OUTLOOK_FOLDER_NAME: ${OUTLOOK_FOLDER_NAME:-Zyra}
+      POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS:-60}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+    ports:
+      - "8081:8080"
+
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "3001:80"
+
+volumes:
+  zyra_pgdata:
