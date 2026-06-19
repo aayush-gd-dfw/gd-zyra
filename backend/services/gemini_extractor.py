@@ -1,85 +1,53 @@
+﻿"""
+Gemini Flash extractor for Zyra call emails.
+Uses google-genai SDK with gemini-3.5-flash.
 """
-Gemini Flash extractor — calls Google Gemini 1.5 Flash (free tier) to extract
-customer_type, customer_status, and summary from Zyra call summary emails.
-
-Free tier: 15 requests/minute, 1M tokens/day.
-Get your key at: https://aistudio.google.com/app/apikey
-"""
-import json
-import logging
-import re
-import httpx
-from config import get_settings
+import logging, json, asyncio
 
 logger = logging.getLogger(__name__)
-settings = get_settings()
 
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
+PROMPT_PREFIX = """You are analyzing a Zyra AI call notification email for Glass Doctor DFW.
+Extract info and respond with ONLY valid JSON, no markdown fences.
+Example format:
+{"customer_type":"Auto","customer_status":"New","summary":"Customer wants windshield replaced.","customer_phone":"(817)555-1234"}
 
-PROMPT_TEMPLATE = """You are processing a Zyra AI voice call summary email for Glass Doctor DFW, a glass company.
+Rules:
+- customer_type: Auto=windshield/auto glass, Retail=window/door/home/shower/commercial glass, Unknown=unclear
+- customer_status: New=first-time/requesting quote, Existing=calling about prior job, Unknown=unclear
+- summary: 1-2 sentences on what the customer needs, no mention of Zyra or AI
+- customer_phone: US phone with dashes/parens, empty string if not found
 
-Extract exactly these 3 fields:
+EMAIL TO ANALYZE:
+"""
 
-1. customer_type: "Auto" if the call is about vehicle/windshield/auto glass, "Retail" if about home/residential/commercial/storefront glass
-2. customer_status: "New" if this is a first-time caller, "Existing" if they are an existing customer
-3. summary: 2-3 sentence summary of the call. Include the customer name and phone number if mentioned.
-
-Email content:
----
-{body}
----
-
-Respond with valid JSON only, no explanation or markdown:
-{{"customer_type": "Auto or Retail", "customer_status": "New or Existing", "summary": "..."}}"""
-
-
-async def extract_call_info(body: str) -> dict:
-    """
-    Call Gemini Flash to extract call fields from email body.
-    Returns dict with customer_type, customer_status, summary.
-    Falls back to empty strings on failure.
-    """
-    if not settings.gemini_api_key:
-        logger.warning("GEMINI_API_KEY not set — AI extraction skipped")
-        return {"customer_type": "", "customer_status": "", "summary": body[:500] if body else ""}
-
-    prompt = PROMPT_TEMPLATE.format(body=body[:4000])  # cap to avoid token limits
-
+async def extract_call_info(body: str):
     try:
-        async with httpx.AsyncClient(timeout=20) as client:
-            resp = await client.post(
-                f"{GEMINI_URL}?key={settings.gemini_api_key}",
-                json={
-                    "contents": [{"parts": [{"text": prompt}]}],
-                    "generationConfig": {
-                        "responseMimeType": "application/json",
-                        "temperature": 0.1,
-                    },
-                },
-            )
-            resp.raise_for_status()
-            data = resp.json()
-
-        text = data["candidates"][0]["content"]["parts"][0]["text"]
-        result = json.loads(text)
-
+        from google import genai
+        from config import get_settings
+        settings = get_settings()
+        if not settings.gemini_api_key:
+            return None
+        client = genai.Client(api_key=settings.gemini_api_key)
+        prompt = PROMPT_PREFIX + body[:6000]
+        loop = asyncio.get_event_loop()
+        response = await loop.run_in_executor(
+            None,
+            lambda: client.models.generate_content(model="gemini-3.5-flash", contents=prompt)
+        )
+        raw = response.text.strip()
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"): raw = raw[4:]
+            raw = raw.strip()
+        data = json.loads(raw)
+        ct = str(data.get("customer_type","")).strip()
+        cs = str(data.get("customer_status","")).strip()
         return {
-            "customer_type": result.get("customer_type", "").strip(),
-            "customer_status": result.get("customer_status", "").strip(),
-            "summary": result.get("summary", "").strip(),
+            "customer_type": ct if ct in ("Auto","Retail","Unknown") else "Unknown",
+            "customer_status": cs if cs in ("New","Existing","Unknown") else "Unknown",
+            "summary": str(data.get("summary","")).strip() or None,
+            "customer_phone": str(data.get("customer_phone","")).strip() or None,
         }
-
     except Exception as e:
-        logger.error(f"Gemini extraction failed: {e}")
-        return {"customer_type": "", "customer_status": "", "summary": ""}
-
-
-def extract_phone(text: str) -> str:
-    """Pull first 10-digit US phone number from text."""
-    m = re.search(r"(\+?1[\s.-]?)?(\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4})", text or "")
-    if not m:
-        return ""
-    digits = re.sub(r"\D", "", m.group(0))
-    if len(digits) > 10 and digits.startswith("1"):
-        digits = digits[1:]
-    return digits if len(digits) == 10 else ""
+        logger.warning(f"Gemini extraction error: {e}")
+        return None
