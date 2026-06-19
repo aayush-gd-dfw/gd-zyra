@@ -1,23 +1,21 @@
 ﻿import { useEffect } from "react";
+import * as microsoftTeams from "@microsoft/teams-js";
 
 export default function TeamsConfigPage() {
   useEffect(() => {
-    const script = document.createElement("script");
-    script.src = "https://res.cdn.office.net/teams-js/2.22.0/js/MicrosoftTeams.min.js";
-    script.onload = () => {
-      window.microsoftTeams.app.initialize().then(() => {
-        window.microsoftTeams.pages.config.registerOnSaveHandler((saveEvent) => {
-          window.microsoftTeams.pages.config.setConfig({
-            contentUrl: "https://gd-zyra-production-8f0a.up.railway.app",
-            websiteUrl: "https://gd-zyra-production-8f0a.up.railway.app",
-            suggestedDisplayName: "Zyra Dashboard",
-          });
-          saveEvent.notifySuccess();
+    microsoftTeams.app.initialize().then(() => {
+      microsoftTeams.pages.config.registerOnSaveHandler((saveEvent) => {
+        microsoftTeams.pages.config.setConfig({
+          contentUrl: "https://gd-zyra-production-8f0a.up.railway.app",
+          websiteUrl: "https://gd-zyra-production-8f0a.up.railway.app",
+          suggestedDisplayName: "Zyra Dashboard",
         });
-        window.microsoftTeams.pages.config.setValidState(true);
+        saveEvent.notifySuccess();
       });
-    };
-    document.head.appendChild(script);
+      microsoftTeams.pages.config.setValidState(true);
+    }).catch((e) => {
+      console.error("Teams init failed:", e);
+    });
   }, []);
 
   return (
