@@ -532,8 +532,15 @@ export default function DashboardPage() {
   };
 
   const handleStatusUpdated = (updatedCall) => {
-    setCalls(prev => prev.map(c => c.id === updatedCall.id ? updatedCall : c));
-    setSelectedCall(updatedCall);
+    if (updatedCall.task_status === "Complete" && !showCompleted) {
+      const idx = visibleCalls.findIndex(c => c.id === updatedCall.id);
+      const next = visibleCalls[idx + 1] || visibleCalls[idx - 1] || null;
+      setCalls(prev => prev.map(c => c.id === updatedCall.id ? updatedCall : c));
+      setSelectedCall(next);
+    } else {
+      setCalls(prev => prev.map(c => c.id === updatedCall.id ? updatedCall : c));
+      setSelectedCall(updatedCall);
+    }
   };
 
   // Filter calls client-side
