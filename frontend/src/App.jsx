@@ -3,6 +3,7 @@ import LoginPage from "./pages/LoginPage";
 import DashboardPage from "./pages/DashboardPage";
 import RulesPage from "./pages/RulesPage";
 import EmployeesPage from "./pages/EmployeesPage";
+import OverviewPage from "./pages/OverviewPage";
 import TeamsConfigPage from "./pages/TeamsConfigPage";
 import Navbar from "./components/Navbar";
 
@@ -28,6 +29,7 @@ export default function App() {
                   <Routes>
                     <Route path="/" element={<Navigate to="/dashboard" replace />} />
                     <Route path="/dashboard" element={<DashboardPage />} />
+                    <Route path="/overview" element={<OverviewPage />} />
                     <Route path="/rules" element={<RulesPage />} />
                     <Route path="/employees" element={<EmployeesPage />} />
                   </Routes>
