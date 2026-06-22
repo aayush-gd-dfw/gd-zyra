@@ -44,6 +44,10 @@ export default function Navbar() {
       <Link to="/dashboard" style={linkStyle("/dashboard")}>Dashboard</Link>
 
       {canSeeRules && (
+        <Link to="/overview" style={linkStyle("/overview")}>📊 Overview</Link>
+      )}
+
+      {canSeeRules && (
         <Link to="/rules" style={linkStyle("/rules")}>⚙ Rules</Link>
       )}
 
