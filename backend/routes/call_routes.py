@@ -1,3 +1,4 @@
+import asyncio
 from typing import Optional
 from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, Query, HTTPException
@@ -8,9 +9,9 @@ from database import get_db
 from models import ZyraCall, Employee
 from auth import get_current_user
 from services.teams_notifier import notify_assignment
+from services.teams_notify import notify_call_assignment
 
 router = APIRouter(prefix="/api/calls", tags=["calls"])
-
 
 def _call_dict(c: ZyraCall) -> dict:
     return {
@@ -29,18 +30,17 @@ def _call_dict(c: ZyraCall) -> dict:
         "raw_body": c.raw_body,
     }
 
-
 @router.get("/stats")
 async def get_stats(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
     today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-    total_r  = await db.execute(select(func.count()).select_from(ZyraCall))
-    today_r  = await db.execute(select(func.count()).select_from(ZyraCall).where(ZyraCall.received_at >= today_start))
-    auto_r   = await db.execute(select(func.count()).select_from(ZyraCall).where(ZyraCall.received_at >= today_start, ZyraCall.customer_type == "Auto"))
+    total_r = await db.execute(select(func.count()).select_from(ZyraCall))
+    today_r = await db.execute(select(func.count()).select_from(ZyraCall).where(ZyraCall.received_at >= today_start))
+    auto_r = await db.execute(select(func.count()).select_from(ZyraCall).where(ZyraCall.received_at >= today_start, ZyraCall.customer_type == "Auto"))
     retail_r = await db.execute(select(func.count()).select_from(ZyraCall).where(ZyraCall.received_at >= today_start, ZyraCall.customer_type == "Retail"))
-    new_r    = await db.execute(select(func.count()).select_from(ZyraCall).where(ZyraCall.received_at >= today_start, ZyraCall.customer_status == "New"))
+    new_r = await db.execute(select(func.count()).select_from(ZyraCall).where(ZyraCall.received_at >= today_start, ZyraCall.customer_status == "New"))
     today = today_r.scalar()
     new_count = new_r.scalar()
     return {
@@ -52,7 +52,6 @@ async def get_stats(
         "today_existing": today - new_count,
     }
 
-
 @router.get("/employees")
 async def list_employees(
     db: AsyncSession = Depends(get_db),
@@ -62,7 +61,6 @@ async def list_employees(
         select(Employee).where(Employee.is_active == True).order_by(Employee.name)
     )
     return [{"id": e.id, "name": e.name, "role": e.role} for e in result.scalars().all()]
-
 
 @router.get("")
 async def list_calls(
@@ -84,7 +82,6 @@ async def list_calls(
     result = await db.execute(q)
     return [_call_dict(c) for c in result.scalars().all()]
 
-
 @router.get("/{call_id}")
 async def get_call(
     call_id: str,
@@ -97,13 +94,10 @@ async def get_call(
         raise HTTPException(status_code=404, detail="Call not found")
     return _call_dict(call)
 
-
 VALID_TASK_STATUSES = {"To Do", "In Progress", "Complete"}
-
 
 class TaskStatusBody(BaseModel):
     task_status: str
-
 
 @router.patch("/{call_id}/status")
 async def update_task_status(
@@ -123,10 +117,8 @@ async def update_task_status(
     await db.refresh(call)
     return _call_dict(call)
 
-
 class AssignBody(BaseModel):
     employee_id: Optional[str] = None
-
 
 @router.patch("/{call_id}/assign")
 async def assign_call(
@@ -142,6 +134,7 @@ async def assign_call(
 
     prev_assigned_id = call.assigned_to_id
 
+    emp = None
     if body.employee_id:
         emp_r = await db.execute(select(Employee).where(Employee.id == body.employee_id))
         emp = emp_r.scalar_one_or_none()
@@ -156,14 +149,25 @@ async def assign_call(
     await db.commit()
     await db.refresh(call)
 
-    # Notify via Teams only when newly assigning (not unassigning)
-    if body.employee_id and body.employee_id != prev_assigned_id and call.assigned_to_name:
+    # Only notify when assigning to a different employee (not unassigning, not same person)
+    if emp and body.employee_id != prev_assigned_id:
+        # Channel webhook notification (existing)
         await notify_assignment(
-            call.assigned_to_name,
+            emp.name,
             call.customer_phone,
             call.customer_type,
             call.customer_status,
             call.summary,
+        )
+        # 1:1 Teams DM notification
+        asyncio.create_task(
+            notify_call_assignment(
+                employee_email=emp.email,
+                employee_name=emp.name,
+                customer_phone=call.customer_phone,
+                customer_type=call.customer_type,
+                customer_status=call.customer_status,
+            )
         )
 
     return _call_dict(call)
