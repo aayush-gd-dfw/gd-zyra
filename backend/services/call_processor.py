@@ -3,17 +3,19 @@ Processes a Zyra email: extracts call info, deduplicates by graph_message_id,
 auto-assigns via rules, stores ZyraCall, and fires a Teams notification.
 
 Extraction order:
-1. Gemini Flash (if GEMINI_API_KEY is set) — richer AI extraction
-2. Text extractor (always available) — regex-based fallback
+1. Gemini Flash (if GEMINI_API_KEY is set) -- richer AI extraction
+2. Text extractor (always available) -- regex-based fallback
 """
+import asyncio
 import logging
 from datetime import datetime, timezone, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from models import ZyraCall
+from models import ZyraCall, Employee
 from services.text_extractor import extract_call_info_from_text
 from services.assignment_engine import get_auto_assignment
 from services.teams_notifier import notify_assignment
+from services.teams_notify import notify_call_assignment
 
 logger = logging.getLogger(__name__)
 
@@ -104,8 +106,9 @@ async def handle_zyra_email(
     await db.commit()
     await db.refresh(call)
 
-    # 4. Fire Teams notification if auto-assigned
+    # 4. Fire Teams notifications if auto-assigned
     if emp_name:
+        # Channel webhook notification
         await notify_assignment(
             emp_name,
             call.customer_phone,
@@ -113,9 +116,23 @@ async def handle_zyra_email(
             call.customer_status,
             call.summary,
         )
+        # 1:1 DM notification via Power Automate
+        if emp_id:
+            emp_result = await db.execute(select(Employee).where(Employee.id == emp_id))
+            emp = emp_result.scalar_one_or_none()
+            if emp and emp.email:
+                asyncio.create_task(
+                    notify_call_assignment(
+                        employee_email=emp.email,
+                        employee_name=emp_name,
+                        customer_phone=call.customer_phone,
+                        customer_type=call.customer_type,
+                        customer_status=call.customer_status,
+                    )
+                )
 
     logger.info(
-        f"Zyra call saved — type={call.customer_type} status={call.customer_status} "
+        f"Zyra call saved -- type={call.customer_type} status={call.customer_status} "
         f"phone={call.customer_phone} assigned={emp_name} ai_processed={call.ai_processed}"
     )
     return call.id
